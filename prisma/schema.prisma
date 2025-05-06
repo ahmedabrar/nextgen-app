@@ -1,0 +1,361 @@
+// This is your Prisma schema file for the Next Gen Safeguarding App
+// Documentation: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// User model with role-based access
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  firstName    String
+  lastName     String
+  phone        String?
+  role         UserRole  @default(PARENT)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  
+  // Relations based on user role
+  parentProfile  ParentProfile?
+  clubProfile    ClubProfile?
+  adminProfile   AdminProfile?
+  
+  // Common relations for all users
+  reports       Report[]       @relation("ReportCreatedBy")
+  reviewsGiven  Review[]       @relation("ReviewCreatedBy")
+  auditLogs     AuditLog[]
+}
+
+enum UserRole {
+  ADMIN
+  CLUB
+  PARENT
+}
+
+// Specific profile for Parent users
+model ParentProfile {
+  id            String    @id @default(uuid())
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Parent-specific fields
+  address       String?
+  isPremium     Boolean   @default(false)
+  premiumUntil  DateTime?
+  stripeCustomerId String?
+  
+  // Parent relations
+  savedClubs    ClubBookmark[]
+  children      Child[]
+}
+
+model Child {
+  id            String    @id @default(uuid())
+  parentId      String
+  parent        ParentProfile @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  firstName     String
+  lastName      String
+  dateOfBirth   DateTime
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+// Club bookmarks for parents
+model ClubBookmark {
+  id            String    @id @default(uuid())
+  parentId      String
+  parent        ParentProfile @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  clubId        String
+  club          ClubProfile @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  createdAt     DateTime  @default(now())
+  
+  @@unique([parentId, clubId])
+}
+
+// Specific profile for Club users
+model ClubProfile {
+  id            String    @id @default(uuid())
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Club details
+  name          String
+  description   String    @db.Text
+  phoneNumber   String
+  email         String
+  website       String?
+  address       String
+  postcode      String
+  latitude      Float?
+  longitude     Float?
+  
+  // Business details
+  businessType  BusinessType @default(OTHER)
+  registrationNumber String?
+  vatNumber     String?
+  
+  // Operational details
+  ageRangeMin   Int
+  ageRangeMax   Int
+  activityTypes ActivityType[]
+  
+  // Verification and subscription
+  verificationStatus VerificationStatus @default(PENDING)
+  safeguardingTier   SafeguardingTier  @default(STANDARD)
+  tierExpiryDate     DateTime?
+  stripeCustomerId   String?
+  subscriptionStatus SubscriptionStatus @default(INACTIVE)
+  subscriptionTier   SubscriptionTier   @default(BASIC)
+  
+  // Relations
+  documents     Document[]
+  reviews       Review[]
+  bookmarkedBy  ClubBookmark[]
+  reports       Report[]         @relation("ReportAboutClub")
+  certifications Certification[]
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+enum BusinessType {
+  LIMITED_COMPANY
+  SOLE_TRADER
+  CHARITY
+  PARTNERSHIP
+  CIC
+  OTHER
+}
+
+enum ActivityType {
+  SPORTS
+  ARTS
+  MUSIC
+  EDUCATION
+  OUTDOORS
+  TECH
+  OTHER
+}
+
+enum VerificationStatus {
+  PENDING
+  IN_REVIEW
+  APPROVED
+  REJECTED
+  SUSPENDED
+}
+
+enum SafeguardingTier {
+  STANDARD
+  ENHANCED
+  PREMIUM
+}
+
+enum SubscriptionStatus {
+  INACTIVE
+  ACTIVE
+  PAST_DUE
+  CANCELED
+}
+
+enum SubscriptionTier {
+  BASIC
+  STANDARD
+  PREMIUM
+}
+
+// Club verification documents
+model Document {
+  id            String    @id @default(uuid())
+  clubId        String
+  club          ClubProfile @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  
+  documentType  DocumentType
+  filename      String
+  fileUrl       String
+  uploadedAt    DateTime  @default(now())
+  expiryDate    DateTime?
+  status        DocumentStatus @default(PENDING)
+  adminNotes    String?
+  
+  // For audit trail
+  reviewerId    String?
+  reviewedAt    DateTime?
+}
+
+enum DocumentType {
+  SAFEGUARDING_POLICY
+  INSURANCE
+  DBS_CERTIFICATE
+  RISK_ASSESSMENT
+  STAFF_QUALIFICATIONS
+  HEALTH_SAFETY
+  OTHER
+}
+
+enum DocumentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  EXPIRED
+}
+
+// Certification model for clubs
+model Certification {
+  id            String    @id @default(uuid())
+  clubId        String
+  club          ClubProfile @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  
+  name          String
+  issuedBy      String
+  issuedDate    DateTime
+  expiryDate    DateTime?
+  certificateUrl String?
+  verified      Boolean   @default(false)
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+// Parent reviews of clubs
+model Review {
+  id            String    @id @default(uuid())
+  clubId        String
+  club          ClubProfile @relation(fields: [clubId], references: [id], onDelete: Cascade)
+  
+  userId        String
+  user          User      @relation("ReviewCreatedBy", fields: [userId], references: [id], onDelete: Cascade)
+  
+  rating        Int       // 1-5 stars
+  title         String
+  content       String    @db.Text
+  anonymous     Boolean   @default(false)
+  
+  // Moderation
+  status        ReviewStatus @default(PENDING)
+  moderatedBy   String?
+  moderatedAt   DateTime?
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+enum ReviewStatus {
+  PENDING
+  PUBLISHED
+  REJECTED
+}
+
+// Safety reports/concerns about clubs
+model Report {
+  id            String    @id @default(uuid())
+  clubId        String
+  club          ClubProfile @relation("ReportAboutClub", fields: [clubId], references: [id], onDelete: Cascade)
+  
+  userId        String
+  user          User      @relation("ReportCreatedBy", fields: [userId], references: [id], onDelete: Cascade)
+  
+  title         String
+  description   String    @db.Text
+  category      ReportCategory
+  anonymous     Boolean   @default(true)
+  
+  // Report handling
+  status        ReportStatus @default(OPEN)
+  priority      ReportPriority @default(MEDIUM)
+  assignedTo    String?
+  resolution    String?
+  resolvedAt    DateTime?
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+enum ReportCategory {
+  SAFETY_CONCERN
+  POLICY_VIOLATION
+  MISLEADING_INFO
+  INAPPROPRIATE_BEHAVIOR
+  OTHER
+}
+
+enum ReportStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  DISMISSED
+}
+
+enum ReportPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// Admin profile
+model AdminProfile {
+  id            String    @id @default(uuid())
+  userId        String    @unique
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  role          AdminRole @default(REVIEWER)
+  department    String?
+  lastActive    DateTime  @default(now())
+}
+
+enum AdminRole {
+  REVIEWER
+  MODERATOR
+  SUPER_ADMIN
+}
+
+// Audit log for tracking important actions
+model AuditLog {
+  id            String    @id @default(uuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id])
+  
+  action        String
+  entityType    String
+  entityId      String
+  details       Json?
+  ipAddress     String?
+  
+  createdAt     DateTime  @default(now())
+}
+
+// Notifications system
+model Notification {
+  id            String    @id @default(uuid())
+  recipientId   String
+  sender        String?
+  
+  title         String
+  message       String    @db.Text
+  type          NotificationType
+  isRead        Boolean   @default(false)
+  readAt        DateTime?
+  
+  // Optional linking to specific records
+  entityType    String?
+  entityId      String?
+  
+  createdAt     DateTime  @default(now())
+}
+
+enum NotificationType {
+  SYSTEM
+  VERIFICATION
+  DOCUMENT
+  REVIEW
+  REPORT
+  SUBSCRIPTION
+  OTHER
+}
